@@ -1,0 +1,150 @@
+###################### APP ######################
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $APP_DEPLOY_NAME
+  labels:
+    name: $APP_DEPLOY_NAME
+spec:
+  selector:
+    matchLabels:
+      app: $APP_DEPLOY_NAME
+  template:
+    metadata:
+      labels:
+        app: $APP_DEPLOY_NAME
+    spec:
+      containers:
+        - name: $APP_DEPLOY_NAME
+          image: $APP_DOCKER_IMAGE_NAME
+          imagePullPolicy: Never
+          ports:
+            - containerPort: $APP_DEPLOY_PORT
+          envFrom:
+            - secretRef:
+                name: $SECRET_NAME
+            - configMapRef:
+                name: $CONFIGMAP_NAME
+          readinessProbe:
+            httpGet:
+              path: $APP_HEALTHCHECK_PATH
+              port: $APP_PORT
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: $APP_HEALTHCHECK_PATH
+              port: $APP_PORT
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $APP_SERVICE_NAME
+spec:
+  selector:
+    app: $APP_DEPLOY_NAME
+  ports:
+    - protocol: TCP
+      port: $APP_SERVICE_PORT
+      targetPort: $APP_DEPLOY_PORT
+
+###################### CONFIG ######################
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $CONFIGMAP_NAME
+data:
+  MAIN_DB_NAME: "$DB_NAME"
+  MAIN_DB_HOST: "$DB_SERVICE_NAME:$DB_SERVICE_PORT"
+  MAIN_DB_PORT: "$DB_SERVICE_PORT"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $SECRET_NAME
+type: Opaque
+data:
+  MAIN_DB_USERNAME: "cG9zdGdyZXM="
+  MAIN_DB_PASSWORD: "cG9zdGdyZXM="
+
+###################### DB ######################
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: $DB_DEPLOY_NAME
+  labels:
+    name: $DB_DEPLOY_NAME
+spec:
+  selector:
+    matchLabels:
+      app: $DB_DEPLOY_NAME
+  serviceName: $DB_DEPLOY_NAME
+  replicas: 1 # by default is 1
+  minReadySeconds: 0 # by default is 0
+  template:
+    metadata:
+      labels:
+        app: $DB_DEPLOY_NAME
+    spec:
+      containers:
+        - name: $DB_DEPLOY_NAME
+          image: postgres:latest
+          ports:
+            - containerPort: $DB_DEPLOY_TARGET_PORT
+          volumeMounts:
+          - name: $DB_DEPLOY_VOLUME_NAME
+            mountPath: /data
+          env:
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: $SECRET_NAME
+                  key: MAIN_DB_USERNAME
+                  optional: false
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: $SECRET_NAME
+                  key: MAIN_DB_PASSWORD
+                  optional: false
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: $CONFIGMAP_NAME
+                  key: MAIN_DB_NAME
+                  optional: false
+            - name: PGPORT
+              valueFrom:
+                configMapKeyRef:
+                  name: $CONFIGMAP_NAME
+                  key: MAIN_DB_PORT
+                  optional: false
+  volumeClaimTemplates:
+  - metadata:
+      name: $DB_DEPLOY_VOLUME_NAME
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $DB_SERVICE_NAME
+spec:
+  selector:
+    app: $DB_DEPLOY_NAME
+  ports:
+    - protocol: TCP
+      port: $DB_SERVICE_PORT
+      targetPort: $DB_DEPLOY_TARGET_PORT
